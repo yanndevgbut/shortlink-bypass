@@ -10,9 +10,17 @@ interface BypassResponse {
   message?: string;
 }
 
+const SAMPLE_SHORTLINKS = [
+  { name: "Sfile Mobi", url: "https://sfile.mobi" },
+  { name: "Safelinku", url: "https://safelinku.com" },
+  { name: "Ouo.io", url: "https://ouo.io" },
+  { name: "Linkvertise", url: "https://linkvertise.com" },
+];
+
 export default function BypassPage() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [stage, setStage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BypassResponse | null>(null);
   const [copied, setCopied] = useState(false);
@@ -24,6 +32,15 @@ export default function BypassPage() {
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setStage("Menghubungi server bypass...");
+
+    const t1 = setTimeout(() => {
+      setStage("Mengurai token redirect...");
+    }, 700);
+
+    const t2 = setTimeout(() => {
+      setStage("Mengekstrak direct URL final...");
+    }, 1500);
 
     try {
       const res = await fetch("/api/bypass", {
@@ -35,7 +52,7 @@ export default function BypassPage() {
       const data: BypassResponse = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Gagal melakukan bypass tautan.");
+        throw new Error(data.message || "Gagal melakukan bypass URL.");
       }
 
       setResult(data);
@@ -43,7 +60,10 @@ export default function BypassPage() {
       const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses link.";
       setError(msg);
     } finally {
+      clearTimeout(t1);
+      clearTimeout(t2);
       setIsLoading(false);
+      setStage("");
     }
   };
 
@@ -69,7 +89,11 @@ export default function BypassPage() {
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-12 md:py-16">
-      <div className="text-center max-w-xl mx-auto mb-8">
+      <div className="text-center max-w-xl mx-auto mb-8 animate-fade-in">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-400 mb-3">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+          Direct API Active
+        </div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-50 mb-2">
           Bypass Shortlink Console
         </h1>
@@ -78,22 +102,38 @@ export default function BypassPage() {
         </p>
       </div>
 
-      {/* Input Form Card */}
-      <div className="p-5 md:p-7 rounded-2xl bg-zinc-900/70 border border-zinc-800 shadow-xl backdrop-blur-sm mb-6">
+      {/* Main Console Form */}
+      <div className="animate-fade-in-delay-1 p-5 md:p-7 rounded-2xl bg-zinc-900/70 border border-zinc-800 shadow-xl backdrop-blur-sm mb-6 relative">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="urlInput"
-              className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2"
-            >
-              Target URL
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label
+                htmlFor="urlInput"
+                className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
+              >
+                Target URL
+              </label>
+              <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                <span>Contoh:</span>
+                {SAMPLE_SHORTLINKS.map((sample) => (
+                  <button
+                    key={sample.name}
+                    type="button"
+                    onClick={() => setUrl(sample.url)}
+                    className="hover:text-emerald-400 hover:underline transition-colors px-1"
+                  >
+                    {sample.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="relative">
               <input
                 id="urlInput"
                 type="url"
                 required
-                placeholder="https://example.com/shortlink..."
+                placeholder="https://sfile.mobi/..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 disabled={isLoading}
@@ -103,7 +143,7 @@ export default function BypassPage() {
                 type="button"
                 onClick={handlePaste}
                 disabled={isLoading}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                className="btn-tactile absolute right-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
               >
                 Paste
               </button>
@@ -111,11 +151,14 @@ export default function BypassPage() {
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <span className="text-xs text-zinc-400">Endpoint: /api/tools/bypasslink</span>
+            <span className="text-xs font-mono text-zinc-400 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/80"></span>
+              Secure Relay
+            </span>
             <button
               type="submit"
               disabled={isLoading || !url}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 active:scale-[0.98] transition-all flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-tactile px-5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 active:scale-[0.98] transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <>
@@ -136,11 +179,25 @@ export default function BypassPage() {
             </button>
           </div>
         </form>
+
+        {/* Loading Progress Scanner State */}
+        {isLoading && (
+          <div className="mt-5 pt-4 border-t border-zinc-800">
+            <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-2">
+              <span className="flex items-center gap-2 text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                {stage || "Mengeksekusi proses bypass..."}
+              </span>
+              <span>Scanning</span>
+            </div>
+            <div className="w-full h-1.5 bg-zinc-950 rounded-full overflow-hidden scan-progress border border-zinc-800"></div>
+          </div>
+        )}
       </div>
 
-      {/* Error Feedback */}
+      {/* Error State */}
       {error && (
-        <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 mb-6">
+        <div className="animate-fade-in p-4 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 mb-6">
           <svg className="w-4 h-4 flex-shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
@@ -148,21 +205,21 @@ export default function BypassPage() {
         </div>
       )}
 
-      {/* Real Result Box */}
+      {/* Live Result Container */}
       {result && result.bypassed_url && (
-        <div className="p-5 md:p-6 rounded-2xl bg-zinc-900/50 border border-emerald-500/30 mb-6">
+        <div className="animate-fade-in p-5 md:p-6 rounded-2xl bg-zinc-900/60 border border-emerald-500/40 shadow-xl backdrop-blur-sm mb-6 relative overflow-hidden">
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-800 text-xs">
             <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span className="font-medium text-emerald-400">Bypass Berhasil</span>
             </div>
             <span className="text-zinc-400 font-mono">Platform: {result.platform}</span>
           </div>
 
-          <div className="space-y-3">
-            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+          <div className="space-y-3.5">
+            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 shadow-inner">
               <div className="text-[11px] text-zinc-400 mb-1">Direct Final Link:</div>
-              <div className="font-mono text-sm text-zinc-200 break-all select-all">
+              <div className="font-mono text-sm text-zinc-100 break-all select-all">
                 {result.bypassed_url}
               </div>
             </div>
@@ -171,19 +228,30 @@ export default function BypassPage() {
               <button
                 type="button"
                 onClick={handleCopy}
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-100 hover:bg-zinc-700 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                className="btn-tactile px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 flex items-center gap-1.5 transition-colors"
               >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <span>{copied ? "Tersalin!" : "Salin Link"}</span>
+                {copied ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span className="text-emerald-400 font-medium">Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span>Salin Link</span>
+                  </>
+                )}
               </button>
 
               <a
                 href={result.bypassed_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 active:scale-[0.98] transition-all flex items-center gap-1.5"
+                className="btn-tactile px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center gap-1.5 transition-colors"
               >
                 <span>Buka Langsung</span>
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -195,17 +263,17 @@ export default function BypassPage() {
         </div>
       )}
 
-      {/* Supported List Teaser */}
-      <div className="p-5 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
+      {/* Supported List Badges */}
+      <div className="animate-fade-in-delay-2 p-5 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
           Contoh Penyedia Terdukung
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-mono text-zinc-300">
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">Sfile.mobi</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">Safelinku</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">Ouomobi / Ouo.io</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">Adf.ly style</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">Linkvertise</span>
+          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Sfile.mobi</span>
+          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Safelinku</span>
+          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Ouomobi / Ouo.io</span>
+          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Adf.ly style</span>
+          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Linkvertise</span>
         </div>
       </div>
     </main>
