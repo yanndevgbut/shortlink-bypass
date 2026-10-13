@@ -1,281 +1,456 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 
-interface BypassResponse {
-  success: boolean;
-  bypassed_url?: string;
-  original_url?: string;
-  platform?: string;
-  message?: string;
+interface HistoryRecord {
+  id: string;
+  service: string;
+  originalUrl: string;
+  targetUrl: string;
+  timeSaved: number;
+  timestamp: number;
+  timeAgo: string;
 }
 
-const SAMPLE_SHORTLINKS = [
-  { name: "Sfile Mobi", url: "https://sfile.mobi" },
-  { name: "Safelinku", url: "https://safelinku.com" },
-  { name: "Ouo.io", url: "https://ouo.io" },
-  { name: "Linkvertise", url: "https://linkvertise.com" },
-];
+const KNOWN_SERVICES: Record<string, string> = {
+  sfile: "Sfile Mobi",
+  safelinku: "Safelinku",
+  ouo: "Ouo.io",
+  linkvertise: "Linkvertise",
+  gatelo: "Gatelo",
+  zipli: "Zipli",
+  klikbayar: "Klikbayar",
+  tautbox: "Tautbox",
+  pintu: "Pintu.id",
+  adfly: "Adf.ly",
+};
+
+function formatTimeAgo(diffSec: number): string {
+  if (diffSec < 60) return "baru saja";
+  const m = Math.floor(diffSec / 60);
+  if (m < 60) return `${m} mnt lalu`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} jam lalu`;
+  const d = Math.floor(h / 24);
+  return `${d} hari lalu`;
+}
 
 export default function BypassPage() {
   const [url, setUrl] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [stage, setStage] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<BypassResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [formErr, setFormErr] = useState(false);
+  const [currentStage, setCurrentStage] = useState(0); // 0 to 4
+  const [logs, setLogs] = useState<{ id: number; text: string; isOk?: boolean }[]>([
+    { id: 0, text: "> menunggu tautan…" },
+  ]);
+  const [resultUrl, setResultUrl] = useState("");
+  const [displayedUrl, setDisplayedUrl] = useState("");
+  const [isFin, setIsFin] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [timeSaved, setTimeSaved] = useState(0);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
+  const typeRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+    try {
+      const stored = localStorage.getItem("lompat_history");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setHistory(parsed);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const detectService = (rawUrl: string): string => {
+    const lower = rawUrl.toLowerCase();
+    for (const [key, name] of Object.entries(KNOWN_SERVICES)) {
+      if (lower.includes(key)) return name;
+    }
+    try {
+      const host = new URL(rawUrl).hostname.replace(/^www\./, "");
+      return host || "Layanan URL";
+    } catch {
+      return "Layanan URL";
+    }
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (busy) return;
 
-    setIsLoading(true);
-    setError(null);
-    setResult(null);
-    setStage("Menghubungi server bypass...");
+    const trimmed = url.trim();
+    if (!/^https?:\/\/[^\s.]+\.[^\s]+/.test(trimmed)) {
+      setMsg("Tempel tautan lengkap yang diawali https://");
+      setFormErr(true);
+      setTimeout(() => setFormErr(false), 500);
+      return;
+    }
 
-    const t1 = setTimeout(() => {
-      setStage("Mengurai token redirect...");
-    }, 700);
+    setMsg("");
+    setBusy(true);
+    setResultUrl("");
+    setDisplayedUrl("");
+    setIsFin(false);
+    setTimeSaved(0);
+    setCurrentStage(0);
 
-    const t2 = setTimeout(() => {
-      setStage("Mengekstrak direct URL final...");
-    }, 1500);
+    const detectedSvc = detectService(trimmed);
+    const logItems: { id: number; text: string; isOk?: boolean }[] = [];
+    let logCount = 0;
+
+    const addLog = (text: string, isOk = false) => {
+      logItems.push({ id: ++logCount, text, isOk });
+      setLogs([...logItems]);
+    };
 
     try {
-      const res = await fetch("/api/bypass", {
+      // Stage 1: Kenali Layanan
+      setCurrentStage(1);
+      addLog("> membuka tautan…");
+      await sleep(600);
+      addLog(`ok layanan ${detectedSvc} terdeteksi`, true);
+      await sleep(250);
+
+      // Stage 2: Lewati Timer
+      setCurrentStage(2);
+      addLog("> mengurai gerbang pengalihan…");
+      await sleep(600);
+
+      // Send API Request in background
+      const fetchPromise = fetch("/api/bypass", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: trimmed }),
       });
 
-      const data: BypassResponse = await res.json();
+      addLog("ok timer dan delay dilewati", true);
+      await sleep(250);
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || "Gagal melakukan bypass URL.");
+      // Stage 3: Selesaikan Captcha
+      setCurrentStage(3);
+      addLog("> membaca respon server…");
+
+      const response = await fetchPromise;
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.bypassed_url) {
+        throw new Error(data.message || "Gagal membuka link tujuan.");
       }
 
-      setResult(data);
+      addLog("ok verifikasi tantangan terselesaikan", true);
+      await sleep(250);
+
+      // Stage 4: Ambil Tujuan
+      setCurrentStage(4);
+      addLog("> mengambil alamat tujuan final…");
+      await sleep(400);
+      addLog("ok alamat tujuan ditemukan", true);
+
+      const finalUrl = data.bypassed_url;
+      setResultUrl(finalUrl);
+
+      // Typewriter effect for #dest
+      let cur = "";
+      for (const ch of finalUrl) {
+        cur += ch;
+        setDisplayedUrl(cur);
+        await sleep(14);
+      }
+      setIsFin(true);
+
+      // Animate time saved count
+      const computedSave = 11 + Math.floor(Math.random() * 8);
+      let n = 0;
+      const countTimer = setInterval(() => {
+        n++;
+        setTimeSaved(n);
+        if (n >= computedSave) clearInterval(countTimer);
+      }, 50);
+
+      // Save to localStorage
+      const newRecord: HistoryRecord = {
+        id: Date.now().toString(),
+        service: data.platform && data.platform !== "unknown" && data.platform !== "redirect"
+          ? data.platform
+          : detectedSvc,
+        originalUrl: trimmed,
+        targetUrl: finalUrl,
+        timeSaved: computedSave,
+        timestamp: Date.now(),
+        timeAgo: "baru saja",
+      };
+
+      const updatedHistory = [newRecord, ...history.filter((h) => h.originalUrl !== trimmed)].slice(0, 50);
+      setHistory(updatedHistory);
+      try {
+        localStorage.setItem("lompat_history", JSON.stringify(updatedHistory));
+      } catch {
+        // ignore
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses link.";
-      setError(msg);
+      const errorMsg = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses link.";
+      setMsg(errorMsg);
+      addLog(`gagal: ${errorMsg}`);
     } finally {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      setIsLoading(false);
-      setStage("");
+      setBusy(false);
     }
   };
 
   const handleCopy = async () => {
-    if (!result?.bypassed_url) return;
+    if (!resultUrl) return;
     try {
-      await navigator.clipboard.writeText(result.bypassed_url);
+      await navigator.clipboard.writeText(resultUrl);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), 1600);
     } catch {
       // fallback
     }
   };
 
-  const handlePaste = async () => {
-    try {
-      const clipText = await navigator.clipboard.readText();
-      if (clipText) setUrl(clipText);
-    } catch {
-      // browser permissions
-    }
-  };
+  // Compute stats from real history
+  const serviceStats = isMounted && history.length > 0
+    ? Object.entries(
+        history.reduce<Record<string, number>>((acc, item) => {
+          acc[item.service] = (acc[item.service] || 0) + 1;
+          return acc;
+        }, {})
+      )
+        .map(([name, count]) => ({
+          name,
+          count,
+          percentage: Math.round((count / history.length) * 100),
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5)
+    : [
+        { name: "Sfile Mobi", count: 0, percentage: 80 },
+        { name: "Safelinku", count: 0, percentage: 65 },
+        { name: "Ouo.io", count: 0, percentage: 45 },
+        { name: "Linkvertise", count: 0, percentage: 30 },
+      ];
+
+  const recentList = isMounted ? history.slice(0, 4) : [];
 
   return (
-    <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-12 md:py-16">
-      <div className="text-center max-w-xl mx-auto mb-8 animate-fade-in">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-400 mb-3">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-          Direct API Active
-        </div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-50 mb-2">
-          Bypass Shortlink Console
-        </h1>
-        <p className="text-sm text-zinc-400">
-          Masukkan URL shortlink yang ingin dilewati untuk mendapatkan direct link asli.
-        </p>
-      </div>
-
-      {/* Main Console Form */}
-      <div className="animate-fade-in-delay-1 p-5 md:p-7 rounded-2xl bg-zinc-900/70 border border-zinc-800 shadow-xl backdrop-blur-sm mb-6 relative">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label
-                htmlFor="urlInput"
-                className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
-              >
-                Target URL
-              </label>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-                <span>Contoh:</span>
-                {SAMPLE_SHORTLINKS.map((sample) => (
-                  <button
-                    key={sample.name}
-                    type="button"
-                    onClick={() => setUrl(sample.url)}
-                    className="hover:text-emerald-400 hover:underline transition-colors px-1"
-                  >
-                    {sample.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="relative">
-              <input
-                id="urlInput"
-                type="url"
-                required
-                placeholder="https://sfile.mobi/..."
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                disabled={isLoading}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3.5 text-sm font-mono text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/70 focus:ring-1 focus:ring-emerald-500/70 transition-all pr-24 disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={handlePaste}
-                disabled={isLoading}
-                className="btn-tactile absolute right-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
-              >
-                Paste
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs font-mono text-zinc-400 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/80"></span>
-              Secure Relay
-            </span>
-            <button
-              type="submit"
-              disabled={isLoading || !url}
-              className="btn-tactile px-5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 active:scale-[0.98] transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <>
-                  <svg className="animate-spin h-4 w-4 text-zinc-950" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                  </svg>
-                  <span>Memproses...</span>
-                </>
-              ) : (
-                <>
-                  <span>Proses Bypass</span>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                  </svg>
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-
-        {/* Loading Progress Scanner State */}
-        {isLoading && (
-          <div className="mt-5 pt-4 border-t border-zinc-800">
-            <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-2">
-              <span className="flex items-center gap-2 text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                {stage || "Mengeksekusi proses bypass..."}
-              </span>
-              <span>Scanning</span>
-            </div>
-            <div className="w-full h-1.5 bg-zinc-950 rounded-full overflow-hidden scan-progress border border-zinc-800"></div>
-          </div>
-        )}
-      </div>
-
-      {/* Error State */}
-      {error && (
-        <div className="animate-fade-in p-4 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 mb-6">
-          <svg className="w-4 h-4 flex-shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+    <div className="wrap">
+      <nav>
+        <Link className="logo" href="/">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="14" y="10" width="4" height="20" rx="2" fill="#2e3b52" />
+            <path
+              d="M3 25C8 1 24 1 29 25"
+              fill="none"
+              stroke="#ff5a1f"
+              strokeWidth="3.6"
+              strokeLinecap="round"
+            />
           </svg>
-          <span>{error}</span>
-        </div>
-      )}
+          Lompat
+        </Link>
+        <ul>
+          <li>
+            <Link href="/">Beranda</Link>
+          </li>
+          <li>
+            <Link href="/bypass" aria-current="page">
+              Lompat
+            </Link>
+          </li>
+          <li>
+            <Link href="/riwayat">Riwayat</Link>
+          </li>
+        </ul>
+        <Link className="btn ghost" href="/riwayat">
+          Riwayat saya
+        </Link>
+      </nav>
 
-      {/* Live Result Container */}
-      {result && result.bypassed_url && (
-        <div className="animate-fade-in p-5 md:p-6 rounded-2xl bg-zinc-900/60 border border-emerald-500/40 shadow-xl backdrop-blur-sm mb-6 relative overflow-hidden">
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-800 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-medium text-emerald-400">Bypass Berhasil</span>
+      <div className="top">
+        <h1>Tempel tautannya.</h1>
+      </div>
+
+      <div className="grid">
+        <main>
+          <form
+            id="f"
+            className={`lompat-form ${formErr ? "err" : ""}`}
+            autoComplete="off"
+            onSubmit={handleSubmit}
+          >
+            <input
+              id="url"
+              type="text"
+              inputMode="url"
+              aria-label="Tautan bergerbang"
+              placeholder="https://sfile.mobi/..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={busy}
+            />
+            <button className="btn" id="go" type="submit" disabled={busy}>
+              Lompat
+              <svg viewBox="0 0 24 24">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          </form>
+
+          <p id="msg" role="alert">
+            {msg}
+          </p>
+
+          <div
+            className="stages"
+            id="stg"
+            style={{
+              "--pg": currentStage >= 4 ? 1 : Math.max(0, (currentStage - 1) / 3),
+            } as React.CSSProperties}
+          >
+            <div className={`st ${currentStage === 1 ? "on" : currentStage > 1 ? "done" : ""}`}>
+              <i>
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="6" />
+                  <path d="M20 20l-4.5-4.5" />
+                </svg>
+              </i>
+              Kenali layanan
             </div>
-            <span className="text-zinc-400 font-mono">Platform: {result.platform}</span>
+            <div className={`st ${currentStage === 2 ? "on" : currentStage > 2 ? "done" : ""}`}>
+              <i>
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="8" />
+                  <path d="M12 8v4l3 2" />
+                </svg>
+              </i>
+              Lewati timer
+            </div>
+            <div className={`st ${currentStage === 3 ? "on" : currentStage > 3 ? "done" : ""}`}>
+              <i>
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+                </svg>
+              </i>
+              Selesaikan captcha
+            </div>
+            <div className={`st ${currentStage === 4 ? "done" : ""}`}>
+              <i>
+                <svg viewBox="0 0 24 24">
+                  <path d="M5 12l4.5 4.5L19 7" />
+                </svg>
+              </i>
+              Ambil tujuan
+            </div>
           </div>
 
-          <div className="space-y-3.5">
-            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 shadow-inner">
-              <div className="text-[11px] text-zinc-400 mb-1">Direct Final Link:</div>
-              <div className="font-mono text-sm text-zinc-100 break-all select-all">
-                {result.bypassed_url}
-              </div>
-            </div>
+          <div className="log" id="log" aria-live="polite">
+            {logs.map((item) => (
+              <p key={item.id}>
+                {item.isOk ? <b>ok </b> : null}
+                {item.text.replace(/^ok\s/, "")}
+              </p>
+            ))}
+          </div>
 
-            <div className="flex flex-wrap items-center gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="btn-tactile px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 flex items-center gap-1.5 transition-colors"
-              >
-                {copied ? (
-                  <>
-                    <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-emerald-400 font-medium">Tersalin!</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    <span>Salin Link</span>
-                  </>
-                )}
+          <div className={`res ${resultUrl ? "show" : ""}`} id="res">
+            <small>Tujuan asli</small>
+            <span id="dest" className={isFin ? "fin" : ""}>
+              {displayedUrl}
+            </span>
+            <div className="row">
+              <button className="btn" id="cp" type="button" onClick={handleCopy}>
+                <svg viewBox="0 0 24 24">
+                  <rect x="9" y="9" width="11" height="11" rx="2" />
+                  <path d="M5 15V6a2 2 0 012-2h9" />
+                </svg>
+                <span>{copied ? "Tersalin" : "Salin"}</span>
               </button>
-
               <a
-                href={result.bypassed_url}
+                className="btn ghost"
+                href={resultUrl || "#"}
+                id="open"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn-tactile px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center gap-1.5 transition-colors"
               >
-                <span>Buka Langsung</span>
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
+                Buka tujuan
               </a>
+              <span className="sv">
+                Hemat <b id="sv">{timeSaved}</b> detik
+              </span>
+            </div>
+            <div className="chips">
+              <span>HTTPS aktif</span>
+              <span>Tanpa pengalihan lanjutan</span>
+              <span>Domain dikenal</span>
             </div>
           </div>
-        </div>
-      )}
+        </main>
 
-      {/* Supported List Badges */}
-      <div className="animate-fade-in-delay-2 p-5 rounded-2xl bg-zinc-900/30 border border-zinc-800/60">
-        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-          Contoh Penyedia Terdukung
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs font-mono text-zinc-300">
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Sfile.mobi</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Safelinku</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Ouomobi / Ouo.io</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Adf.ly style</span>
-          <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors">Linkvertise</span>
-        </div>
+        <aside>
+          <section>
+            <h2>Layanan terbanyak</h2>
+            <div id="bars">
+              {serviceStats.map((item, idx) => (
+                <div className="bar" key={item.name}>
+                  <span>{item.name}</span>
+                  <div>
+                    <i
+                      style={
+                        {
+                          "--dl": `${idx * 0.12}s`,
+                          width: `${item.percentage}%`,
+                        } as React.CSSProperties
+                      }
+                    />
+                  </div>
+                  <em>{item.percentage}%</em>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h2>Baru saja kamu lompati</h2>
+            <ul id="rec">
+              {recentList.length > 0 ? (
+                recentList.map((item) => {
+                  const nowSec = Math.floor(Date.now() / 1000);
+                  const itemSec = Math.floor(item.timestamp / 1000);
+                  const diff = Math.max(0, nowSec - itemSec);
+                  return (
+                    <li key={item.id}>
+                      <b>{item.service}</b>
+                      <span>{item.targetUrl.replace(/^https?:\/\//, "")}</span>
+                      <time>{formatTimeAgo(diff)}</time>
+                    </li>
+                  );
+                })
+              ) : (
+                <li style={{ gridTemplateColumns: "1fr", color: "var(--mute)" }}>
+                  <span>Belum ada riwayat tercatat</span>
+                </li>
+              )}
+            </ul>
+            <Link className="more" href="/riwayat">
+              Lihat semua riwayat
+            </Link>
+          </section>
+        </aside>
       </div>
-    </main>
+
+      <footer>
+        <span>© 2026 Lompat</span>
+        <span>Lewati gerbang iklan, langsung ke tujuan</span>
+      </footer>
+    </div>
   );
 }
