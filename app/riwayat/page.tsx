@@ -10,13 +10,13 @@ interface HistoryRecord {
   targetUrl: string;
   timeSaved: number;
   timestamp: number;
-  timeAgo: string;
+  formattedTime?: string;
 }
 
 const DAYS = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 
-function formatTimeAgo(timestamp: number): string {
-  const diffSec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+function computeTimeAgo(timestamp: number, currentNow: number): string {
+  const diffSec = Math.max(0, Math.floor((currentNow - timestamp) / 1000));
   if (diffSec < 60) return "Baru saja";
   const m = Math.floor(diffSec / 60);
   if (m < 60) return `${m} mnt lalu`;
@@ -37,15 +37,69 @@ export default function RiwayatPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isClient, setIsClient] = useState(false);
+  const [heatmapData, setHeatmapData] = useState<{
+    cells: { level: number; dayName: string; count: number; delay: number }[];
+    totalCount: number;
+    mostActiveDay: string;
+  }>({
+    cells: Array.from({ length: 182 }, (_, i) => ({
+      level: 0,
+      dayName: "",
+      count: 0,
+      delay: i * 3,
+    })),
+    totalCount: 0,
+    mostActiveDay: "Belum ada",
+  });
 
   useEffect(() => {
     setIsClient(true);
+    const nowTime = Date.now();
     try {
       const stored = localStorage.getItem("lompat_history");
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          setHistory(parsed);
+          const formattedList: HistoryRecord[] = parsed.map((item: HistoryRecord) => ({
+            ...item,
+            formattedTime: computeTimeAgo(item.timestamp, nowTime),
+          }));
+          setHistory(formattedList);
+
+          const dayCounts = Array(7).fill(0);
+          let totalCount = 0;
+          const countMap: Record<string, number> = {};
+
+          formattedList.forEach((h) => {
+            const d = new Date(h.timestamp);
+            const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+            countMap[key] = (countMap[key] || 0) + 1;
+            dayCounts[d.getDay()]++;
+            totalCount++;
+          });
+
+          const today = new Date();
+          const cells = [];
+          for (let w = 25; w >= 0; w--) {
+            for (let d = 0; d < 7; d++) {
+              const pastDate = new Date();
+              pastDate.setDate(today.getDate() - (w * 7 + (6 - d)));
+              const key = `${pastDate.getFullYear()}-${pastDate.getMonth() + 1}-${pastDate.getDate()}`;
+              const count = countMap[key] || 0;
+              const level = count === 0 ? 0 : count < 4 ? 1 : count < 8 ? 2 : count < 12 ? 3 : 4;
+              cells.push({
+                level,
+                dayName: DAYS[pastDate.getDay()],
+                count,
+                delay: (w * 7 + d) * 3,
+              });
+            }
+          }
+
+          const mostActiveDayIndex = dayCounts.indexOf(Math.max(...dayCounts));
+          const mostActiveDay = totalCount > 0 ? DAYS[mostActiveDayIndex] : "Belum ada";
+
+          setHeatmapData({ cells, totalCount, mostActiveDay });
         }
       }
     } catch {
@@ -79,45 +133,6 @@ export default function RiwayatPage() {
       // fallback
     }
   };
-
-  // Generate 26 weeks activity map (182 days)
-  const heatmapData = useMemo(() => {
-    const cells = [];
-    const dayCounts = Array(7).fill(0);
-    let totalCount = 0;
-
-    const countMap: Record<string, number> = {};
-    history.forEach((h) => {
-      const d = new Date(h.timestamp);
-      const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-      countMap[key] = (countMap[key] || 0) + 1;
-      dayCounts[d.getDay()]++;
-      totalCount++;
-    });
-
-    const today = new Date();
-    // 26 weeks = 182 days
-    for (let w = 25; w >= 0; w--) {
-      for (let d = 0; d < 7; d++) {
-        const pastDate = new Date();
-        pastDate.setDate(today.getDate() - (w * 7 + (6 - d)));
-        const key = `${pastDate.getFullYear()}-${pastDate.getMonth() + 1}-${pastDate.getDate()}`;
-        const count = countMap[key] || 0;
-        const level = count === 0 ? 0 : count < 4 ? 1 : count < 8 ? 2 : count < 12 ? 3 : 4;
-        cells.push({
-          level,
-          dayName: DAYS[pastDate.getDay()],
-          count,
-          delay: (w * 7 + d) * 3,
-        });
-      }
-    }
-
-    const mostActiveDayIndex = dayCounts.indexOf(Math.max(...dayCounts));
-    const mostActiveDay = totalCount > 0 ? DAYS[mostActiveDayIndex] : "Belum ada";
-
-    return { cells, totalCount, mostActiveDay };
-  }, [history]);
 
   return (
     <div className="wrap">
@@ -174,7 +189,7 @@ export default function RiwayatPage() {
             <i
               key={idx}
               data-l={cell.level}
-              title={`${cell.dayName} · ${cell.count} tautan`}
+              title={cell.dayName ? `${cell.dayName} · ${cell.count} tautan` : ""}
               style={{ animationDelay: `${cell.delay}ms` }}
             />
           ))}
@@ -222,27 +237,28 @@ export default function RiwayatPage() {
             </tr>
           </thead>
           <tbody id="tb">
-            {filteredRows.map((row) => (
-              <tr key={row.id}>
-                <td>{formatTimeAgo(row.timestamp)}</td>
-                <td>
-                  <b>{row.service}</b>
-                </td>
-                <td className="u" title={row.targetUrl}>
-                  {row.targetUrl}
-                </td>
-                <td className="h">+{row.timeSaved} dtk</td>
-                <td>
-                  <button type="button" onClick={() => handleCopy(row.id, row.targetUrl)}>
-                    {copiedId === row.id ? "Tersalin" : "Salin"}
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {isClient &&
+              filteredRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.formattedTime || "Baru saja"}</td>
+                  <td>
+                    <b>{row.service}</b>
+                  </td>
+                  <td className="u" title={row.targetUrl}>
+                    {row.targetUrl}
+                  </td>
+                  <td className="h">+{row.timeSaved} dtk</td>
+                  <td>
+                    <button type="button" onClick={() => handleCopy(row.id, row.targetUrl)}>
+                      {copiedId === row.id ? "Tersalin" : "Salin"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
-        <p className={`empty ${filteredRows.length === 0 ? "show" : ""}`} id="em">
-          {history.length === 0
+        <p className={`empty ${isClient && filteredRows.length === 0 ? "show" : ""}`} id="em">
+          {isClient && history.length === 0
             ? "Belum ada riwayat lompatan. Masuk ke halaman Lompat untuk memulai."
             : "Tidak ada lompatan yang cocok dengan pencarianmu."}
         </p>

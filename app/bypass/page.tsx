@@ -61,7 +61,15 @@ export default function BypassPage() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          setHistory(parsed);
+          const nowSec = Math.floor(Date.now() / 1000);
+          const mapped = parsed.map((item) => {
+            const itemSec = Math.floor((item.timestamp || 0) / 1000);
+            return {
+              ...item,
+              timeAgo: formatTimeAgo(Math.max(0, nowSec - itemSec)),
+            };
+          });
+          setHistory(mapped);
         }
       }
     } catch {
@@ -422,18 +430,13 @@ export default function BypassPage() {
             <h2>Baru saja kamu lompati</h2>
             <ul id="rec">
               {recentList.length > 0 ? (
-                recentList.map((item) => {
-                  const nowSec = Math.floor(Date.now() / 1000);
-                  const itemSec = Math.floor(item.timestamp / 1000);
-                  const diff = Math.max(0, nowSec - itemSec);
-                  return (
-                    <li key={item.id}>
-                      <b>{item.service}</b>
-                      <span>{item.targetUrl.replace(/^https?:\/\//, "")}</span>
-                      <time>{formatTimeAgo(diff)}</time>
-                    </li>
-                  );
-                })
+                recentList.map((item) => (
+                  <li key={item.id}>
+                    <b>{item.service}</b>
+                    <span>{item.targetUrl.replace(/^https?:\/\//, "")}</span>
+                    <time>{item.timeAgo || "baru saja"}</time>
+                  </li>
+                ))
               ) : (
                 <li style={{ gridTemplateColumns: "1fr", color: "var(--mute)" }}>
                   <span>Belum ada riwayat tercatat</span>
